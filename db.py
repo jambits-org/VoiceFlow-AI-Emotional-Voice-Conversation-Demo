@@ -2,6 +2,7 @@ import sqlite3
 import uuid
 import json
 import os
+from typing import Optional, List, Dict
 from contextlib import contextmanager
 from config import MAX_ATTEMPTS
 
@@ -64,7 +65,7 @@ def seed_otp(code: str):
         )
 
 
-def verify_and_claim_otp(code: str) -> str | None:
+def verify_and_claim_otp(code: str) -> Optional[str]:
     """Verify OTP, mark as used, create session. Returns session_id or None."""
     with get_db() as conn:
         row = conn.execute(
@@ -91,7 +92,7 @@ def verify_and_claim_otp(code: str) -> str | None:
         return session_id
 
 
-def get_session(session_id: str) -> dict | None:
+def get_session(session_id: str) -> Optional[dict]:
     with get_db() as conn:
         row = conn.execute(
             "SELECT id, attempts_left FROM sessions WHERE id = ?", (session_id,)
@@ -125,7 +126,7 @@ def add_message(session_id: str, role: str, content: str):
         )
 
 
-def get_history(session_id: str, limit: int = 6) -> list[dict]:
+def get_history(session_id: str, limit: int = 6) -> List[Dict]:
     """Get recent messages for context window."""
     with get_db() as conn:
         rows = conn.execute(
