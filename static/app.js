@@ -5,6 +5,62 @@ let isRecording = false;
 let isProcessing = false;
 let recordingTimer = null;
 const MAX_RECORDING_SECONDS = 30;
+const SESSION_KEY = 'voiceflow_session_id';
+
+// --- Session persistence ---
+function saveSession(id) {
+  sessionId = id;
+  localStorage.setItem(SESSION_KEY, id);
+}
+
+function clearSession() {
+  sessionId = null;
+  localStorage.removeItem(SESSION_KEY);
+}
+
+async function tryResumeSession() {
+  const saved = localStorage.getItem(SESSION_KEY);
+  if (!saved) return false;
+
+  try {
+    const fd = new FormData();
+    fd.append('session_id', saved);
+    const res = await fetch('/api/resume-session', { method: 'POST', body: fd });
+    if (!res.ok) {
+      clearSession();
+      return false;
+    }
+    const data = await res.json();
+    sessionId = data.session_id;
+
+    // Switch to chat screen
+    document.getElementById('otp-screen').classList.add('hidden');
+    document.getElementById('chat-screen').classList.remove('hidden');
+    document.getElementById('attempts-count').textContent = data.attempts_left;
+
+    // Restore chat history
+    if (data.history && data.history.length > 0) {
+      for (const msg of data.history) {
+        addMessage(msg.content, msg.role === 'user' ? 'user' : 'ai');
+      }
+    }
+
+    if (data.attempts_left <= 0) {
+      showToast('No attempts remaining', 'warning');
+      setMicState('disabled');
+    }
+
+    return true;
+  } catch (e) {
+    clearSession();
+    return false;
+  }
+}
+
+// Auto-resume on page load
+document.addEventListener('DOMContentLoaded', () => {
+  tryResumeSession();
+});
 
 // --- OTP ---
 async function verifyOTP() {
@@ -25,7 +81,7 @@ async function verifyOTP() {
       throw new Error(d.detail || 'Invalid code');
     }
     const data = await res.json();
-    sessionId = data.session_id;
+    saveSession(data.session_id);
     document.getElementById('attempts-count').textContent = data.attempts_left;
     document.getElementById('otp-screen').classList.add('hidden');
     document.getElementById('chat-screen').classList.remove('hidden');

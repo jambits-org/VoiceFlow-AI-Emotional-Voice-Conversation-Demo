@@ -34,6 +34,19 @@ async def verify_otp(otp: str = Form(...)):
     return {"session_id": session_id, "attempts_left": MAX_ATTEMPTS}
 
 
+@router.post("/api/resume-session")
+async def resume_session(session_id: str = Form(...)):
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    history = get_history(session_id, limit=50)
+    return {
+        "session_id": session["id"],
+        "attempts_left": session["attempts_left"],
+        "history": history,
+    }
+
+
 @router.post("/api/chat")
 async def chat(session_id: str = Form(...), audio: UploadFile = File(...)):
     session = get_session(session_id)
