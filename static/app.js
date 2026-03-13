@@ -4,13 +4,26 @@ let isRecording = false;
 let isProcessing = false;
 let recordingTimer = null;
 const MAX_RECORDING_SECONDS = 30;
+const TOKEN_KEY = 'voiceflow_token';
 
-// --- Session resume via server cookie ---
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+// --- Resume session on load ---
 async function tryResumeSession() {
+  const token = getToken();
+  if (!token) return;
+
   try {
-    const res = await fetch('/api/session-status');
+    const res = await fetch('/api/session-status', {
+      headers: { 'X-Token': token }
+    });
     const data = await res.json();
-    if (!data.active) return;
+    if (!data.active) {
+      clearToken();
+      return;
+    }
 
     document.getElementById('otp-screen').classList.add('hidden');
     document.getElementById('chat-screen').classList.remove('hidden');
@@ -27,7 +40,7 @@ async function tryResumeSession() {
       setMicState('disabled');
     }
   } catch (e) {
-    // No session, show OTP screen
+    clearToken();
   }
 }
 
@@ -52,6 +65,7 @@ async function verifyOTP() {
       throw new Error(d.detail || 'Invalid code');
     }
     const data = await res.json();
+    saveToken(data.token);
     document.getElementById('attempts-count').textContent = data.attempts_left;
     document.getElementById('otp-screen').classList.add('hidden');
     document.getElementById('chat-screen').classList.remove('hidden');
@@ -116,10 +130,15 @@ async function sendAudio(blob) {
   fd.append('audio', blob, 'audio.webm');
 
   try {
-    const res = await fetch('/api/chat', { method: 'POST', body: fd });
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'X-Token': getToken() },
+      body: fd,
+    });
     if (!res.ok) {
       const d = await res.json();
       if (res.status === 401) {
+        clearToken();
         showToast('Session expired. Please reload.', 'error');
         return;
       }
@@ -167,32 +186,27 @@ function setMicState(state) {
 
   switch (state) {
     case 'idle':
-      hint.textContent = 'Tap to speak';
-      break;
+      hint.textContent = 'Tap to speak'; break;
     case 'recording':
       waves.classList.remove('hidden');
       micIcon.classList.add('hidden');
       stopIcon.classList.remove('hidden');
       btn.classList.add('scale-110', 'ring-2', 'ring-red-400/50');
-      hint.textContent = 'Recording... tap to stop';
-      break;
+      hint.textContent = 'Recording... tap to stop'; break;
     case 'processing':
       spinner.classList.remove('hidden');
       micIcon.classList.add('hidden');
       btn.disabled = true;
       btn.classList.add('opacity-50');
-      hint.textContent = 'Thinking...';
-      break;
+      hint.textContent = 'Thinking...'; break;
     case 'speaking':
       btn.disabled = true;
       btn.classList.add('opacity-50');
-      hint.textContent = 'Speaking...';
-      break;
+      hint.textContent = 'Speaking...'; break;
     case 'disabled':
       btn.disabled = true;
       btn.classList.add('opacity-50');
-      hint.textContent = 'No attempts left';
-      break;
+      hint.textContent = 'No attempts left'; break;
   }
 }
 
@@ -201,13 +215,12 @@ function addMessage(text, type) {
   const container = document.getElementById('messages');
   const wrapper = document.createElement('div');
   wrapper.className = 'fade-in flex ' + (type === 'user' ? 'justify-end' : 'justify-start');
-
   const bubble = document.createElement('div');
-  bubble.className = 'rounded-2xl px-4 py-3 max-w-[85%] text-sm ';
-  bubble.className += type === 'user'
-    ? 'bg-violet-600/20 border border-violet-500/20 rounded-tr-md text-white/90'
-    : 'glass rounded-tl-md text-white/70';
-
+  bubble.className = 'rounded-2xl px-4 py-3 max-w-[85%] text-sm ' + (
+    type === 'user'
+      ? 'bg-violet-600/20 border border-violet-500/20 rounded-tr-md text-white/90'
+      : 'glass rounded-tl-md text-white/70'
+  );
   bubble.textContent = text;
   wrapper.appendChild(bubble);
   container.appendChild(wrapper);
@@ -224,11 +237,9 @@ function showToast(message, type = 'error') {
     info: 'bg-blue-500/15 border-blue-500/30 text-blue-300',
   };
   const icons = { error: '✕', warning: '⚠', info: 'ℹ' };
-
   toast.className = `fade-in flex items-center gap-3 px-4 py-3 rounded-xl border backdrop-blur-xl text-sm ${colors[type] || colors.error}`;
   toast.innerHTML = `<span class="text-base">${icons[type] || icons.error}</span><span class="flex-1">${message}</span>`;
   container.appendChild(toast);
-
   setTimeout(() => {
     toast.style.opacity = '0';
     toast.style.transform = 'translateY(-10px)';

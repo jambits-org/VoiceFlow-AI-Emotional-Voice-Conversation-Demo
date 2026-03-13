@@ -1,7 +1,7 @@
 import io
 import base64
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
+from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from openai import OpenAI
 
@@ -22,38 +22,36 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
-def _get_session_id(request: Request) -> str:
-    sid = request.session.get("session_id")
-    if not sid:
+def _require_token(x_token: str = Header(None)):
+    if not x_token:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    return sid
+    session = get_session(x_token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    return session
 
 
 @router.get("/", response_class=HTMLResponse)
 async def index():
-    html = (TEMPLATES_DIR / "index.html").read_text()
-    return HTMLResponse(html)
+    return HTMLResponse((TEMPLATES_DIR / "index.html").read_text())
 
 
 @router.post("/api/verify-otp")
-async def verify_otp(request: Request, otp: str = Form(...)):
+async def verify_otp(otp: str = Form(...)):
     session_id = verify_and_claim_otp(otp.strip())
     if not session_id:
         raise HTTPException(status_code=401, detail="Invalid or already used access code")
-    request.session["session_id"] = session_id
-    return {"attempts_left": MAX_ATTEMPTS}
+    return {"token": session_id, "attempts_left": MAX_ATTEMPTS}
 
 
 @router.get("/api/session-status")
-async def session_status(request: Request):
-    sid = request.session.get("session_id")
-    if not sid:
+async def session_status(x_token: str = Header(None)):
+    if not x_token:
         return JSONResponse({"active": False})
-    session = get_session(sid)
+    session = get_session(x_token)
     if not session:
-        request.session.clear()
         return JSONResponse({"active": False})
-    history = get_history(sid, limit=50)
+    history = get_history(x_token, limit=50)
     return JSONResponse({
         "active": True,
         "attempts_left": session["attempts_left"],
@@ -62,19 +60,16 @@ async def session_status(request: Request):
 
 
 @router.post("/api/chat")
-async def chat(request: Request, audio: UploadFile = File(...)):
-    session_id = _get_session_id(request)
-    session = get_session(session_id)
-    if not session:
-        request.session.clear()
-        raise HTTPException(status_code=401, detail="Invalid session")
+async def chat(x_token: str = Header(None), audio: UploadFile = File(...)):
+    session = _require_token(x_token)
+    session_id = session["id"]
+
     if session["attempts_left"] <= 0:
         raise HTTPException(status_code=429, detail="No attempts remaining")
 
     decrement_attempts(session_id)
 
     try:
-        # 1. Transcribe with Whisper
         audio_bytes = await audio.read()
         transcript = client.audio.transcriptions.create(
             model=STT_MODEL,
@@ -83,7 +78,6 @@ async def chat(request: Request, audio: UploadFile = File(...)):
         user_text = transcript.text
         add_message(session_id, "user", user_text)
 
-        # 2. Build context from DB history
         history = get_history(session_id, limit=LLM_HISTORY_LIMIT)
         messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
 
@@ -98,7 +92,6 @@ async def chat(request: Request, audio: UploadFile = File(...)):
         reply_text = completion.choices[0].message.content
         add_message(session_id, "assistant", reply_text)
 
-        # 3. TTS
         speech = client.audio.speech.create(
             model=TTS_MODEL,
             voice=TTS_VOICE,

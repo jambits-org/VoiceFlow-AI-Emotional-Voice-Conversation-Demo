@@ -1,5 +1,4 @@
 import os
-import secrets
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,7 +8,6 @@ APP_TITLE = os.getenv("APP_TITLE", "VoiceFlow AI")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OTP_CODE = os.getenv("OTP_CODE", "8472")
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "10"))
-SESSION_SECRET = os.getenv("SESSION_SECRET", secrets.token_hex(32))
 
 # Models
 STT_MODEL = os.getenv("STT_MODEL", "whisper-1")
