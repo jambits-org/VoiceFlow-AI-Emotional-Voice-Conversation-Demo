@@ -1,9 +1,7 @@
 import sqlite3
-import uuid
 import os
 from typing import Optional, List, Dict
 from contextlib import contextmanager
-from config import MAX_ATTEMPTS
 
 DB_PATH = os.getenv("DB_PATH", "voiceflow.db")
 
@@ -30,96 +28,76 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS otp_codes (
                 code TEXT PRIMARY KEY,
-                used INTEGER DEFAULT 0,
-                used_at TEXT
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                otp_code TEXT NOT NULL,
                 attempts_left INTEGER NOT NULL,
-                created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (otp_code) REFERENCES otp_codes(code)
+                created_at TEXT DEFAULT (datetime('now'))
             )
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
+                otp_code TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (session_id) REFERENCES sessions(id)
+                FOREIGN KEY (otp_code) REFERENCES otp_codes(code)
             )
         """)
 
 
-def seed_otp(code: str):
+def seed_otp(code: str, max_attempts: int):
     with get_db() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO otp_codes (code, used) VALUES (?, 0)",
-            (code,)
-        )
-
-
-def verify_and_claim_otp(code: str) -> Optional[str]:
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT code, used FROM otp_codes WHERE code = ?", (code,)
+        existing = conn.execute(
+            "SELECT code FROM otp_codes WHERE code = ?", (code,)
         ).fetchone()
-        if not row or row["used"]:
-            return None
-        conn.execute(
-            "UPDATE otp_codes SET used = 1, used_at = datetime('now') WHERE code = ?",
-            (code,)
-        )
-        session_id = str(uuid.uuid4())
-        conn.execute(
-            "INSERT INTO sessions (id, otp_code, attempts_left) VALUES (?, ?, ?)",
-            (session_id, code, MAX_ATTEMPTS)
-        )
-        return session_id
+        if not existing:
+            conn.execute(
+                "INSERT INTO otp_codes (code, attempts_left) VALUES (?, ?)",
+                (code, max_attempts)
+            )
 
 
-def get_session(session_id: str) -> Optional[Dict]:
+def verify_otp(code: str) -> Optional[Dict]:
     with get_db() as conn:
         row = conn.execute(
-            "SELECT id, attempts_left FROM sessions WHERE id = ?", (session_id,)
+            "SELECT code, attempts_left FROM otp_codes WHERE code = ?", (code,)
         ).fetchone()
         if not row:
             return None
-        return {"id": row["id"], "attempts_left": row["attempts_left"]}
+        return {"code": row["code"], "attempts_left": row["attempts_left"]}
 
 
-def decrement_attempts(session_id: str):
+def get_status(code: str) -> Optional[Dict]:
+    return verify_otp(code)
+
+
+def decrement_attempts(code: str):
     with get_db() as conn:
         conn.execute(
-            "UPDATE sessions SET attempts_left = attempts_left - 1 WHERE id = ?",
-            (session_id,)
+            "UPDATE otp_codes SET attempts_left = attempts_left - 1 WHERE code = ?",
+            (code,)
         )
 
 
-def refund_attempt(session_id: str):
+def refund_attempt(code: str):
     with get_db() as conn:
         conn.execute(
-            "UPDATE sessions SET attempts_left = attempts_left + 1 WHERE id = ?",
-            (session_id,)
+            "UPDATE otp_codes SET attempts_left = attempts_left + 1 WHERE code = ?",
+            (code,)
         )
 
 
-def add_message(session_id: str, role: str, content: str):
+def add_message(code: str, role: str, content: str):
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-            (session_id, role, content)
+            "INSERT INTO messages (otp_code, role, content) VALUES (?, ?, ?)",
+            (code, role, content)
         )
 
 
-def get_history(session_id: str, limit: int = 6) -> List[Dict]:
+def get_history(code: str, limit: int = 6) -> List[Dict]:
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-            (session_id, limit)
+            "SELECT role, content FROM messages WHERE otp_code = ? ORDER BY id DESC LIMIT ?",
+            (code, limit)
         ).fetchall()
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]

@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from config import APP_TITLE, OTP_CODE
+from config import APP_TITLE, OTP_CODE, MAX_ATTEMPTS
 from db import init_db, seed_otp
 from routes import router
 
@@ -9,7 +9,7 @@ from routes import router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    seed_otp(OTP_CODE)
+    seed_otp(OTP_CODE, MAX_ATTEMPTS)
     yield
 
 

@@ -4,26 +4,22 @@ let isRecording = false;
 let isProcessing = false;
 let recordingTimer = null;
 const MAX_RECORDING_SECONDS = 30;
-const TOKEN_KEY = 'voiceflow_token';
+const CODE_KEY = 'voiceflow_code';
 
-function getToken() { return localStorage.getItem(TOKEN_KEY); }
-function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
-function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+function getCode() { return localStorage.getItem(CODE_KEY); }
+function saveCode(c) { localStorage.setItem(CODE_KEY, c); }
 
-// --- Resume session on load ---
+// --- Resume on load ---
 async function tryResumeSession() {
-  const token = getToken();
-  if (!token) return;
+  const code = getCode();
+  if (!code) return;
 
   try {
-    const res = await fetch('/api/session-status', {
-      headers: { 'X-Token': token }
-    });
+    const fd = new FormData();
+    fd.append('code', code);
+    const res = await fetch('/api/session-status', { method: 'POST', body: fd });
     const data = await res.json();
-    if (!data.active) {
-      clearToken();
-      return;
-    }
+    if (!data.active) return;
 
     document.getElementById('otp-screen').classList.add('hidden');
     document.getElementById('chat-screen').classList.remove('hidden');
@@ -34,14 +30,11 @@ async function tryResumeSession() {
         addMessage(msg.content, msg.role === 'user' ? 'user' : 'ai');
       }
     }
-
     if (data.attempts_left <= 0) {
       showToast('No attempts remaining', 'warning');
       setMicState('disabled');
     }
-  } catch (e) {
-    clearToken();
-  }
+  } catch (e) { /* show OTP screen */ }
 }
 
 document.addEventListener('DOMContentLoaded', tryResumeSession);
@@ -65,7 +58,7 @@ async function verifyOTP() {
       throw new Error(d.detail || 'Invalid code');
     }
     const data = await res.json();
-    saveToken(data.token);
+    saveCode(data.code);
     document.getElementById('attempts-count').textContent = data.attempts_left;
     document.getElementById('otp-screen').classList.add('hidden');
     document.getElementById('chat-screen').classList.remove('hidden');
@@ -108,7 +101,6 @@ function stopRecording() {
   isRecording = false;
   clearTimeout(recordingTimer);
   setMicState('processing');
-
   mediaRecorder.onstop = async () => {
     const blob = new Blob(audioChunks, { type: 'audio/webm' });
     mediaRecorder.stream.getTracks().forEach(t => t.stop());
@@ -125,27 +117,17 @@ function stopRecording() {
 async function sendAudio(blob) {
   isProcessing = true;
   setMicState('processing');
-
   const fd = new FormData();
+  fd.append('code', getCode());
   fd.append('audio', blob, 'audio.webm');
 
   try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'X-Token': getToken() },
-      body: fd,
-    });
+    const res = await fetch('/api/chat', { method: 'POST', body: fd });
     if (!res.ok) {
       const d = await res.json();
-      if (res.status === 401) {
-        clearToken();
-        showToast('Session expired. Please reload.', 'error');
-        return;
-      }
       throw new Error(d.detail || 'Something went wrong');
     }
     const data = await res.json();
-
     document.getElementById('attempts-count').textContent = data.attempts_left;
     addMessage(data.user_text, 'user');
     addMessage(data.reply_text, 'ai');
@@ -185,32 +167,25 @@ function setMicState(state) {
   btn.classList.remove('opacity-50', 'scale-110', 'ring-2', 'ring-red-400/50');
 
   switch (state) {
-    case 'idle':
-      hint.textContent = 'Tap to speak'; break;
+    case 'idle': hint.textContent = 'Tap to speak'; break;
     case 'recording':
-      waves.classList.remove('hidden');
-      micIcon.classList.add('hidden');
+      waves.classList.remove('hidden'); micIcon.classList.add('hidden');
       stopIcon.classList.remove('hidden');
       btn.classList.add('scale-110', 'ring-2', 'ring-red-400/50');
       hint.textContent = 'Recording... tap to stop'; break;
     case 'processing':
-      spinner.classList.remove('hidden');
-      micIcon.classList.add('hidden');
-      btn.disabled = true;
-      btn.classList.add('opacity-50');
+      spinner.classList.remove('hidden'); micIcon.classList.add('hidden');
+      btn.disabled = true; btn.classList.add('opacity-50');
       hint.textContent = 'Thinking...'; break;
     case 'speaking':
-      btn.disabled = true;
-      btn.classList.add('opacity-50');
+      btn.disabled = true; btn.classList.add('opacity-50');
       hint.textContent = 'Speaking...'; break;
     case 'disabled':
-      btn.disabled = true;
-      btn.classList.add('opacity-50');
+      btn.disabled = true; btn.classList.add('opacity-50');
       hint.textContent = 'No attempts left'; break;
   }
 }
 
-// --- Chat messages ---
 function addMessage(text, type) {
   const container = document.getElementById('messages');
   const wrapper = document.createElement('div');
@@ -227,7 +202,6 @@ function addMessage(text, type) {
   container.scrollTop = container.scrollHeight;
 }
 
-// --- Toasts ---
 function showToast(message, type = 'error') {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
@@ -241,8 +215,7 @@ function showToast(message, type = 'error') {
   toast.innerHTML = `<span class="text-base">${icons[type] || icons.error}</span><span class="flex-1">${message}</span>`;
   container.appendChild(toast);
   setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateY(-10px)';
+    toast.style.opacity = '0'; toast.style.transform = 'translateY(-10px)';
     toast.style.transition = 'all 0.3s ease';
     setTimeout(() => toast.remove(), 300);
   }, 4000);
